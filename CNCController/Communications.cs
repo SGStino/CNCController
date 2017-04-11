@@ -16,22 +16,49 @@ namespace CNCController
         public static readonly byte[] PREFIX = new byte[] { (byte)'M', (byte)'S', (byte)'G' };
 
         private object syncRoot = new object();
-        private readonly SerialPort serial;
+        private SerialPort serial;
         private ulong id;
 
         private int queueAvailable = 1;
+        private CancellationTokenSource cancelSource;
 
-
-        public Communications(string port, int baudrate)
+        public Communications()
         {
-            this.serial = new SerialPort(port, baudrate);
-
         }
 
-        public void Open()
+        public void Open(string port, int baudrate = 9600)
         {
+            serial = new SerialPort(port, baudrate);
+            cancelSource = new CancellationTokenSource();
             serial.Open();
-            beginReading();
+            ConnectionChanged?.Invoke(true);
+            cancelSource.Token.Register(cancelAllTasks);
+            beginReading(cancelSource.Token);
+            
+        }
+
+        private void cancelAllTasks()
+        { 
+            cancelPendingTasks(taskAcknowledgements);
+            cancelPendingTasks(taskCompletions);
+        }
+
+        private static void cancelPendingTasks(Dictionary<ulong, TaskCompletionSource<ulong>> tasks)
+        {
+            lock (tasks)
+            {
+                var items = tasks.Values;
+                foreach (var item in items)
+                    item.TrySetCanceled();
+                tasks.Clear();
+            }
+        }
+
+        public void Close()
+        {
+            cancelSource.Cancel();
+            serial.Close();
+            serial = null;
         }
 
 
@@ -40,58 +67,72 @@ namespace CNCController
         public event Action<byte[], int, int> RawDataSend;
         public event Action<byte[], int, int> RawResponseReceived;
         public event Action<Response> ResponseReceived;
+        public event Action<bool> ConnectionChanged;
 
-        private async void beginReading()
+        private async void beginReading(CancellationToken cancel)
         {
-            var messageSize = Marshal.SizeOf<Response>();
-            byte[] buffer = new byte[messageSize + 3];
-            int offset = 0;
-            do
+            await readAsync(cancel);
+            ConnectionChanged?.Invoke(false);
+        }
+
+        private async Task readAsync(CancellationToken cancel)
+        {
+            try
             {
-                int count = await serial.BaseStream.ReadAsync(buffer, offset, messageSize - offset).ConfigureAwait(false);
-                RawDataReceived?.Invoke(buffer, offset, count);
-                offset += count;
-
-                if (offset > 3)
+                var messageSize = Marshal.SizeOf<Response>();
+                byte[] buffer = new byte[messageSize + 3];
+                int offset = 0;
+                do
                 {
-                    byte msgPos;
-                    if (findMsg(buffer, out msgPos) && msgPos != 0)
+                    int count = await serial.BaseStream.ReadAsync(buffer, offset, messageSize - offset, cancel).ConfigureAwait(false);
+                    RawDataReceived?.Invoke(buffer, offset, count);
+                    offset += count;
+
+                    if (offset > 3)
                     {
-                        shiftLeft(buffer, msgPos);
-                        offset -= msgPos;
+                        byte msgPos;
+                        if (findMsg(buffer, out msgPos) && msgPos != 0)
+                        {
+                            shiftLeft(buffer, msgPos);
+                            offset -= msgPos;
+                        }
                     }
-                }
 
-                if (offset < messageSize)
-                    continue;
+                    if (offset < messageSize)
+                        continue;
 
-                offset = 0; // next message
+                    offset = 0; // next message
 
-                RawResponseReceived?.Invoke(buffer, 3, messageSize + 3);
+                    RawResponseReceived?.Invoke(buffer, 3, messageSize + 3);
 
-                //throw new InvalidOperationException("Invalid message: " + ASCIIEncoding.ASCII.GetString(buffer, 0, count) + " "+ string.Join(" ",buffer.Take(count).Select(v => string.Format("{0:X}", v))));
-                var response = getStruct<Response>(buffer, 3);
-                ResponseReceived?.Invoke(response);
-                lock (syncRoot)
-                {
-                    queueAvailable = response.QueueAvailable;
-                    awaiter.Pulse();
-                }
-                switch (response.Type)
-                {
-                    case ResponseType.Completed:
-                    case ResponseType.Acknowledge:
-                        completeAcknowledgement(response.Header, false, response.Type == ResponseType.Completed);
-                        break;
-                    case ResponseType.Error:
-                        completeAcknowledgement(response.Header, true, true);
-                        break;
-                    case ResponseType.Startup:
-                        // startupEvent;
-                        break;
-                }
+                    //throw new InvalidOperationException("Invalid message: " + ASCIIEncoding.ASCII.GetString(buffer, 0, count) + " "+ string.Join(" ",buffer.Take(count).Select(v => string.Format("{0:X}", v))));
+                    var response = getStruct<Response>(buffer, 3);
+                    ResponseReceived?.Invoke(response);
+                    lock (syncRoot)
+                    {
+                        queueAvailable = response.QueueAvailable;
+                        awaiter.Pulse();
+                    }
+                    switch (response.Type)
+                    {
+                        case ResponseType.Completed:
+                        case ResponseType.Acknowledge:
+                            completeAcknowledgement(response.Header, false, response.Type == ResponseType.Completed);
+                            break;
+                        case ResponseType.Error:
+                            completeAcknowledgement(response.Header, true, true);
+                            break;
+                        case ResponseType.Startup:
+                            // startupEvent;
+                            break;
+                    }
 
-            } while (serial.IsOpen);
+                } while (serial.IsOpen && !cancelSource.IsCancellationRequested);
+            }
+            catch (Exception ex)
+            {
+
+            }
         }
 
         private void shiftLeft(byte[] buffer, byte msgPos)
@@ -148,10 +189,6 @@ namespace CNCController
             }
         }
 
-        public void Close()
-        {
-            serial.Close();
-        }
 
 
         private Dictionary<ulong, TaskCompletionSource<ulong>> taskAcknowledgements = new Dictionary<ulong, TaskCompletionSource<ulong>>();

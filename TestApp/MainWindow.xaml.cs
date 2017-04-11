@@ -26,7 +26,7 @@ namespace TestApp
         public MainWindow()
         {
             InitializeComponent();
-            this.comms = new Communications("COM5", 9600);//230400
+            this.comms = new Communications();//230400
             Start();
             comms.RawDataReceived += Comms_RawDataReceived1;
             comms.RawDataSend += Comms_RawDataReceived2;
@@ -69,7 +69,7 @@ namespace TestApp
 
         public void Start()
         {
-            comms.Open();
+            comms.Open("COM5", 9600);
         }
 
         private async void ResetButton_Click(object sender, RoutedEventArgs e)
@@ -88,7 +88,7 @@ namespace TestApp
 
         private async Task debugCommand(string v, CommResult result)
         {
-            this.Log($"Reset {result.Id}");
+            this.Log($"{v} {result.Id}");
             await debugCommand(v, "Send", result.Send, result.Id);
             await debugCommand(v, "Confirmed", result.Confirmed, result.Id);
             await debugCommand(v, "Completed", result.Completed, result.Id);
