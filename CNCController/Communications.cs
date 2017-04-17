@@ -1,328 +1,124 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO.Ports;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
+using CNCController.Protocol;
+using System.Threading;
 
 namespace CNCController
 {
     public class Communications
     {
         private CancellationTokenSource cancelCommands = new CancellationTokenSource();
-        public static readonly byte[] PREFIX = new byte[] { (byte)'M', (byte)'S', (byte)'G' };
-
-        private object syncRoot = new object();
         private SerialPort serial;
-        private ulong id;
+        private uint id = 0;
+        private readonly Dictionary<ulong, TaskCompletionSource<ulong>> taskAcknowledgements = new Dictionary<ulong, TaskCompletionSource<ulong>>();
+        private readonly Dictionary<ulong, TaskCompletionSource<ulong>> taskCompletions = new Dictionary<ulong, TaskCompletionSource<ulong>>();
 
-        private int queueAvailable = 1;
-        private CancellationTokenSource cancelSource;
+        private byte sequence = 0;
 
-        public Communications()
-        {
-        }
+        private TaskCompletionSource<bool>[] responseTasks = new TaskCompletionSource<bool>[255];
 
         public void Open(string port, int baudrate = 9600)
         {
             serial = new SerialPort(port, baudrate);
-            cancelSource = new CancellationTokenSource();
             serial.Open();
-            ConnectionChanged?.Invoke(true);
-            cancelSource.Token.Register(cancelAllTasks);
-            beginReading(cancelSource.Token);
-            
         }
-
-        private void cancelAllTasks()
-        { 
-            cancelPendingTasks(taskAcknowledgements);
-            cancelPendingTasks(taskCompletions);
-        }
-
-        private static void cancelPendingTasks(Dictionary<ulong, TaskCompletionSource<ulong>> tasks)
-        {
-            lock (tasks)
-            {
-                var items = tasks.Values;
-                foreach (var item in items)
-                    item.TrySetCanceled();
-                tasks.Clear();
-            }
-        }
-
-        public void Close()
-        {
-            cancelSource.Cancel();
-            serial.Close();
-            serial = null;
-        }
-
-
 
         public event Action<byte[], int, int> RawDataReceived;
         public event Action<byte[], int, int> RawDataSend;
-        public event Action<byte[], int, int> RawResponseReceived;
-        public event Action<Response> ResponseReceived;
-        public event Action<bool> ConnectionChanged;
-        public event Action PositionReset;
 
-        private async void beginReading(CancellationToken cancel)
-        {
-            await readAsync(cancel);
-            ConnectionChanged?.Invoke(false);
-        }
+        private SemaphoreSlim writeSemaphore = new SemaphoreSlim(1);
 
-        private async Task readAsync(CancellationToken cancel)
+        public async Task WriteAsync<T>(byte seq, T datagram, CancellationToken cancellationToken)
+            where T : struct
         {
+            await writeSemaphore.WaitAsync().ConfigureAwait(false);
             try
             {
-                var messageSize = Marshal.SizeOf<Response>();
-                byte[] buffer = new byte[messageSize + 3];
-                int offset = 0;
+                var bytes = getBytes(seq, datagram, out ushort crc);
+                bool confirmed = false;
+
+                var confirm = WaitForResponse(seq);
                 do
                 {
-                    int count = await serial.BaseStream.ReadAsync(buffer, offset, messageSize - offset, cancel).ConfigureAwait(false);
-                    RawDataReceived?.Invoke(buffer, offset, count);
-                    offset += count;
-
-                    if (offset > 3)
-                    {
-                        byte msgPos;
-                        if (findMsg(buffer, out msgPos) && msgPos != 0)
-                        {
-                            shiftLeft(buffer, msgPos);
-                            offset -= msgPos;
-                        }
-                    }
-
-                    if (offset < messageSize)
-                        continue;
-
-                    offset = 0; // next message
-
-                    RawResponseReceived?.Invoke(buffer, 3, messageSize + 3);
-
-                    //throw new InvalidOperationException("Invalid message: " + ASCIIEncoding.ASCII.GetString(buffer, 0, count) + " "+ string.Join(" ",buffer.Take(count).Select(v => string.Format("{0:X}", v))));
-                    var response = getStruct<Response>(buffer, 3);
-                    ResponseReceived?.Invoke(response);
-                    lock (syncRoot)
-                    {
-                        queueAvailable = response.QueueAvailable;
-                        awaiter.Pulse();
-                    }
-                    switch (response.Type)
-                    {
-                        case ResponseType.Completed:
-                        case ResponseType.Acknowledge:
-                            completeAcknowledgement(response.Header, false, response.Type == ResponseType.Completed);
-                            break;
-                        case ResponseType.Error:
-                            completeAcknowledgement(response.Header, true, true);
-                            break;
-                        case ResponseType.Startup:
-                            // startupEvent;
-                            break;
-                    }
-
-                    if (response.Type == ResponseType.Completed && response.Header.Type == MessageType.Reset)
-                        PositionReset?.Invoke();
-
-                } while (serial.IsOpen && !cancelSource.IsCancellationRequested);
-            }
-            catch (Exception ex)
-            {
-
-            }
-        }
-
-        private void shiftLeft(byte[] buffer, byte msgPos)
-        {
-            for (int i = msgPos; i < buffer.Length; i++)
-                buffer[i - msgPos] = buffer[i];
-        }
-
-        public static bool findMsg(byte[] buffer, out byte pos)
-        {
-            bool found;
-            for (byte i = 0; i < buffer.Length - PREFIX.Length; i++)
-            {
-                pos = i;
-                found = true;
-                for (int j = 0; j < PREFIX.Length; j++)
-                {
-                    if (buffer[i + j] != PREFIX[j])
-                    {
-                        found = false;
-                        break;
-                    }
+                    RawDataSend?.Invoke(bytes, 0, bytes.Length);
+                    await serial.BaseStream.WriteAsync(bytes, 0, bytes.Length, cancellationToken);
+                    var timeout = getConfirmTimeout(); // give remote 100 ms time to confirm. 
+                    confirmed = await WaitForAnyAsync(timeout, confirm);
                 }
-                if (found)
-                    return true;
+                while (!confirmed);
+                // TODO: wait for confirmation
             }
-            pos = default(byte);
+            finally
+            {
+                writeSemaphore.Release();
+            }
+        }
+
+        private async Task<bool> WaitForAnyAsync(params Task<bool>[] tasks) => await (await Task.WhenAny(tasks).ConfigureAwait(false)).ConfigureAwait(false);
+
+        private async Task<bool> getConfirmTimeout()
+        {
+            await Task.Delay(100).ConfigureAwait(false);
             return false;
         }
 
-        private void completeAcknowledgement(RequestHeader header, bool error, bool completed)
+        private Task<bool> WaitForResponse(byte seq)
         {
-            TaskCompletionSource<ulong> tcs;
-            lock (taskAcknowledgements)
-                if (taskAcknowledgements.TryGetValue(header.Id, out tcs))
-                {
-                    if (error)
-                        tcs.SetException(new Exception("Error"));
-                    else
-                        tcs.SetResult(header.Id);
-                    taskAcknowledgements.Remove(header.Id);
-                }
-            if (completed)
-            {
-                lock (taskCompletions)
-                    if (taskCompletions.TryGetValue(header.Id, out tcs))
-                    {
-                        if (error)
-                            tcs.SetException(new Exception("Error"));
-                        else
-                            tcs.SetResult(header.Id);
-                        taskCompletions.Remove(header.Id);
-                    }
-            }
+
+            var tsc = new TaskCompletionSource<bool>();
+            responseTasks[seq] = tsc;
+            return tsc.Task;
         }
 
-
-
-        private Dictionary<ulong, TaskCompletionSource<ulong>> taskAcknowledgements = new Dictionary<ulong, TaskCompletionSource<ulong>>();
-        private Dictionary<ulong, TaskCompletionSource<ulong>> taskCompletions = new Dictionary<ulong, TaskCompletionSource<ulong>>();
-
-        public CommResult ResetAsync()
-        {
-            var commandId = getID();
-            byte[] request = getBytes(new RequestHeader
-            {
-                Id = commandId,
-                Type = MessageType.Reset
-            });
-            var cancel = cancelCommands;
-            var tcsAck = getTask(commandId, taskAcknowledgements);
-            var tcsCmp = getTask(commandId, taskCompletions);
-            var send = sendAsync(request, cancel.Token);
-
-            return CommResult.Create(commandId, send, tcsAck, tcsCmp, cancelCommands.Token);
-        }
-
-
-
-        private SemaphoreSlim sendSemaphore = new SemaphoreSlim(1);
-        private SemaphoreSlim sendVerifySemaphore = new SemaphoreSlim(1);
-        private Awaiter awaiter = new Awaiter();
-        private async Task sendAsync(byte[] request, CancellationToken cancel, bool force = false)
-        { // only one command can send at a time 
-            if (!force) // when forced (like for clear), the command gets send anyway
-            {
-                await sendVerifySemaphore.WaitAsync();
-                lock (syncRoot)
-                {
-                    queueAvailable--;
-                }
-
-                while (queueAvailable < 0 && !cancel.IsCancellationRequested) // 0 means this one was the last to go into the queue
-                {
-                    await awaiter.WaitAsync();
-                }
-                sendVerifySemaphore.Release();
-            }
-
-            cancel.ThrowIfCancellationRequested();
-
-            await sendSemaphore.WaitAsync();
-            await WriteAsync(PREFIX, 0, PREFIX.Length);
-            await WriteAsync(request, 0, request.Length).ConfigureAwait(false);
-            sendSemaphore.Release();
-
-        }
-
-        public CommResult ClearAsync()
-        {
-            cancelCommands?.Cancel(); // any pending commands get cancelled
-            cancelCommands = new CancellationTokenSource();
-            var commandId = getID();
-            byte[] request = getBytes(new RequestHeader
-            {
-                Id = commandId,
-                Type = MessageType.Clear
-            });
-            var cancel = cancelCommands.Token;
-            var tcsAck = getTask(commandId, taskAcknowledgements);
-            var send = sendAsync(request, cancel, true);
-
-            return CommResult.Create(commandId, send, tcsAck, tcsAck, cancel); // this is complete as soon as it's confirmed
-        }
-
-        private TaskCompletionSource<ulong> getTask(ulong commandId, Dictionary<ulong, TaskCompletionSource<ulong>> source)
-        {
-            var tcs = new TaskCompletionSource<ulong>();
-            lock (source)
-                source.Add(commandId, tcs);
-            return tcs;
-        }
-
-        public CommResult WritePositionAsync(Position position)
-        {
-            var commandId = getID();
-            var requestHeader = getBytes(new RequestHeader
-            {
-                Id = commandId,
-                Type = MessageType.Position
-            });
-            var cancel = cancelCommands.Token;
-            var requestPosition = getBytes(position);
-            var request = combine(requestHeader, requestPosition);
-            var tcsAck = getTask(commandId, taskAcknowledgements);
-            var tcsCmp = getTask(commandId, taskCompletions);
-            var send = sendAsync(request, cancel);
-
-            return CommResult.Create(commandId, send, tcsAck, tcsCmp, cancel);
-        }
-
-        private Task WriteAsync(byte[] data, int offset, int length)
-        {
-            RawDataSend?.Invoke(data, offset, length);
-            return serial.BaseStream.WriteAsync(data, offset, length);
-        }
-
-        private byte[] combine(params byte[][] arrays)
-        {
-            int count = arrays.Sum(a => a.Length);
-            var result = new byte[count];
-            var offset = 0;
-            foreach (var ar in arrays)
-            {
-                Array.Copy(ar, 0, result, offset, ar.Length);
-                offset += ar.Length;
-            }
-            return result;
-        }
-
-        private ulong getID()
-        {
-            lock (syncRoot)
-                return id++;
-        }
-
-        private byte[] getBytes<T>(T str)
+        private byte[] getBytes<T>(byte seq, T str, out ushort crc)
         {
             int size = Marshal.SizeOf(str);
-            byte[] arr = new byte[size];
-
+            byte[] arr = new byte[size + 1 + 4 + 2];
+            if (size > byte.MaxValue) throw new InvalidOperationException($"Can't send payloads bigger than {byte.MaxValue}");
+            arr[0] = (byte)'M';
+            arr[1] = (byte)'S';
+            arr[2] = (byte)'G';
+            arr[3] = (byte)size;
+            arr[4] = seq;
             IntPtr ptr = Marshal.AllocHGlobal(size);
             Marshal.StructureToPtr(str, ptr, true);
-            Marshal.Copy(ptr, arr, 0, size);
+            Marshal.Copy(ptr, arr, 5, size);
             Marshal.FreeHGlobal(ptr);
+            crc = computeChecksum(arr, 5, arr.Length - 7);/* length - seq - header - crc */
+
+            arr[arr.Length - 2] = (byte)crc;
+            arr[arr.Length - 1] = (byte)(crc >> 8);
             return arr;
+        }
+
+        private ushort computeChecksum(byte[] arr, int start, int len)
+        {
+            ushort crc = 0xFFFF;
+
+            for (int pos = start; pos < len + start; pos++)
+            {
+                crc ^= arr[pos];   // XOR byte into least sig. byte of crc
+
+                for (int i = 8; i != 0; i--)
+                {    // Loop over each bit
+                    if ((crc & 0x0001) != 0)
+                    {      // If the LSB is set
+                        crc >>= 1;                    // Shift right and XOR 0xA001
+                        crc ^= 0xA001;
+                    }
+                    else                            // Else LSB is not set
+                        crc >>= 1;                    // Just shift right
+                }
+            }
+            // Note, this number has low and high bytes swapped, so use it accordingly (or swap bytes)
+            return crc;
+
         }
 
         private T getStruct<T>(byte[] bytes, int offset)
@@ -341,5 +137,68 @@ namespace CNCController
             return str;
 
         }
+
+        public CommResult ResetAsync()
+        {
+
+            var payload = new RequestHeader
+            {
+                Id = getID(),
+                Type = MessageType.Clear
+            };
+            return SendWithResult(payload, payload.Id);
+        }
+
+
+        private CommResult SendWithResult<T>(T payload, uint id)
+            where T : struct
+        {
+            var seq = sequence++;
+            var cancel = cancelCommands;
+            var tcsAck = getTask(id, taskAcknowledgements);
+            var tcsCmp = getTask(id, taskCompletions);
+            var result = WriteAsync(seq, payload, cancel.Token);
+
+            return CommResult.Create(id, result, tcsAck, tcsCmp, cancel.Token);
+        }
+
+        public CommResult ClearAsync()
+        {
+
+            var payload = new RequestHeader
+            {
+                Id = getID(),
+                Type = MessageType.Clear
+            };
+            return SendWithResult(payload, payload.Id);
+        }
+
+
+        public CommResult WritePositionAsync(Position pos)
+        {
+            var payload = new PositionDatagram
+            {
+                Header = new RequestHeader
+                {
+                    Id = getID(),
+                    Type = MessageType.Clear
+                },
+                Position = pos
+            };
+            return SendWithResult(payload, payload.Header.Id);
+        }
+
+        private uint getID()
+        {
+            return id++;
+        }
+        private TaskCompletionSource<ulong> getTask(ulong commandId, Dictionary<ulong, TaskCompletionSource<ulong>> source)
+        {
+            var tcs = new TaskCompletionSource<ulong>();
+            lock (source)
+                source.Add(commandId, tcs);
+            return tcs;
+        }
+
     }
 }

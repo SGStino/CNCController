@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace CNCController
+namespace CNCController.Protocol
 {
     [Flags]
     public enum PositionFlags : byte

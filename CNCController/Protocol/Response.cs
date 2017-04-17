@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace CNCController
+namespace CNCController.Protocol
 {
     [StructLayout(LayoutKind.Explicit, Size = SIZE)]
     public struct Response

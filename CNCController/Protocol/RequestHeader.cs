@@ -5,15 +5,15 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace CNCController
+namespace CNCController.Protocol
 {
     [StructLayout(LayoutKind.Explicit, Size = SIZE)]
     public struct RequestHeader
     {
-        public const int SIZE = sizeof(MessageType) + sizeof(ulong);
+        public const int SIZE = sizeof(MessageType);
         [FieldOffset(0)]
         public MessageType Type;
         [FieldOffset(sizeof(MessageType))]
-        public ulong Id;
+        public uint Id;
     }
 }

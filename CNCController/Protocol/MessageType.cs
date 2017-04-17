@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace CNCController
+namespace CNCController.Protocol
 {
     public enum MessageType : short
     {

@@ -1,4 +1,5 @@
 ﻿using CNCController;
+using CNCController.Protocol;
 using System;
 using System.Collections.Generic;
 using System.Linq;

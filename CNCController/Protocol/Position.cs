@@ -1,6 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 
-namespace CNCController
+namespace CNCController.Protocol
 {
     [StructLayout(LayoutKind.Explicit, Size = SIZE)]
     public struct Position

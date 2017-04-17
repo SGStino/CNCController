@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Reactive;
 using System.IO.Ports;
 using System.Collections.ObjectModel;
+using CNCController.Protocol;
 
 namespace CNCController.Wpf.ViewModels
 {

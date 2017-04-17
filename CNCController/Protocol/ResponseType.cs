@@ -1,4 +1,4 @@
-﻿namespace CNCController
+﻿namespace CNCController.Protocol
 {
     public enum ResponseType : short
     {
