@@ -21,15 +21,15 @@ byte bufferOffset = 0;
 char headerOffset = -1;
 byte payloadLength = 0;
 byte sequenceNumber = 0;
-
+byte responseSequence = 0;
 char header[3] = {'M', 'S', 'G'};
 
-uint16_t computeChecksum(byte* arr, byte len)
+uint16_t computeChecksum(void* arr, byte len)
 { 
   uint16_t crc = 0xFFFF;
   for (byte pos = 0; pos < len ; pos++)
   {
-    crc ^= (uint16_t)(*(arr+pos));   // XOR byte into least sig. byte of crc
+    crc ^= (uint16_t)(*(byte*)(arr+pos));   // XOR byte into least sig. byte of crc
     for (byte i = 8; i != 0; i--)
     {    // Loop over each bit
       if ((crc & 0x0001) != 0)
@@ -74,33 +74,55 @@ bool findHeader()
   return false;
 }
 
-void sendResponse(byte* start, byte length)
+void sendResponse(void* start, byte length)
 {
+  debugSerial.print("response: ");
+  debugSerial.print(length);
+  debugSerial.print(" bytes, seq=");
+  debugSerial.print(responseSequence);
+  debugSerial.println("");
   uint16_t crc = computeChecksum(start, length);
-  Serial.write((char*)&header, 3);
-  Serial.write(length);
-  Serial.write((char*)start, length);
-  Serial.write(crc);
+  Serial.write((char*)&header, 3); // 0 1 2
+  Serial.write(length); // 3
+  Serial.write(responseSequence++); // 4
+  Serial.write((char*)start, length); // 5 -> 5+length
+  Serial.write(crc); // 5 + length + 1,2
 }
 
 void sendNACK(byte sequence, bool transportLevel)
-{
-  
+{  
+  byte nack[5] = {'N','A','C', sequence};
+  sendResponse(&nack, 4);
 }
 void sendACK(byte sequence)
 {
-  
+  byte ack[4] = {'A','C','K', sequence};
+  sendResponse(&ack, 4);
 }
 
-void messageReceived(byte* start, byte length, uint16_t crc, byte seq)
+bool processMessage(void* start, byte length)
+{
+  return true; // always accept for now
+}
+void messageReceived(void* start, byte length, uint16_t crc, byte seq)
 {
   auto calcCrc = computeChecksum(start, length);
+  
+  debugSerial.print(length);
+  debugSerial.print(" bytes received with crc=");
+  debugSerial.print(crc, HEX);
+  debugSerial.print(", computed crc=");
+  debugSerial.print(calcCrc, HEX);
+  debugSerial.print(", seq=");
+  debugSerial.print(seq);
+  debugSerial.println();
+    
   if(calcCrc != crc)
   {
     sendNACK(seq, true);
   }
   else
-  { 
+  {     
     if(!processMessage(start, length))
     {
       sendNACK(seq, false);
@@ -109,12 +131,6 @@ void messageReceived(byte* start, byte length, uint16_t crc, byte seq)
     {
       sendACK(seq);  
     }
-    debugSerial.print(length);
-    debugSerial.print(" bytes received with crc=");
-    debugSerial.print(crc, HEX);
-    debugSerial.print(", computed crc=");
-    debugSerial.print(calcCrc, HEX);
-    debugSerial.println();
   }
 }
 void shiftBuffer(byte start)
@@ -141,6 +157,20 @@ void readLoop()
       {
         findHeader();
       } 
+      if(headerOffset + HEADER_SIZE + payloadLength >= BUFFER_SIZE)
+      {
+        if(headerOffset > 0)
+        { 
+          shiftBuffer(headerOffset); // move header to pos 0 to make room
+        }
+        else
+        {
+          // message to long, garbage received, reset buffers
+          headerOffset = 0;
+          payloadLength = 0;
+          bufferOffset = 0;
+        }
+      }
       auto msgEnd = headerOffset + HEADER_SIZE + payloadLength + CRC_SIZE;
      
       if(headerOffset >= 0)
@@ -148,7 +178,7 @@ void readLoop()
         if(bufferOffset >= msgEnd)
         {
           uint16_t crc = *(uint16_t*)&buffer[headerOffset + HEADER_SIZE + payloadLength]; 
-          messageReceived((byte*)&buffer[headerOffset + HEADER_SIZE], payloadLength, crc);
+          messageReceived((void*)&buffer[headerOffset + HEADER_SIZE], payloadLength, crc, sequenceNumber);
           shiftBuffer(msgEnd);
           bufferOffset -= msgEnd;
           headerOffset = -1;

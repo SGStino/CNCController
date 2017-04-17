@@ -30,7 +30,7 @@ namespace TestApp
             this.comms = new Communications();//230400
             Start();
             comms.RawDataReceived += Comms_RawDataReceived1;
-            comms.RawDataSend += Comms_RawDataReceived2;
+            comms.RawDataSent += Comms_RawDataReceived2;
             //comms.RawResponseReceived += Comms_RawDataReceived;
             //comms.ResponseReceived += Comms_ResponseReceived;
             Input.Text = "INPUT" + Environment.NewLine;

@@ -13,6 +13,9 @@ namespace CNCController
 {
     public class Communications
     {
+        private const byte HEADER_SIZE = 4;
+        private byte[] header = new byte[] { (byte)'M', (byte)'S', (byte)'G' };
+
         private CancellationTokenSource cancelCommands = new CancellationTokenSource();
         private SerialPort serial;
         private uint id = 0;
@@ -27,10 +30,109 @@ namespace CNCController
         {
             serial = new SerialPort(port, baudrate);
             serial.Open();
+            beginReading();
+        }
+
+        private async void beginReading()
+        {
+            byte payloadLength = 0, payloadStart = 0, seq = 0;
+            bool hasHeader = false;
+
+            byte offset = 0;
+            byte[] buffer = new byte[128];
+            do
+            {
+                int available = buffer.Length - offset;
+                int count = await serial.BaseStream.ReadAsync(buffer, offset, available).ConfigureAwait(false);
+                offset += (byte)count;
+                if (offset >= buffer.Length) throw new OverflowException("Too much data for buffer, should not have happened");
+                if (count > 0)
+                {
+                    if (findHeader(buffer, offset, out byte headerOffset))
+                    {
+                        payloadLength = buffer[headerOffset + header.Length];
+                        seq = buffer[headerOffset + header.Length + 1];
+                        payloadStart = (byte)(headerOffset + header.Length + 2);
+                        hasHeader = true;
+                    }
+
+                    if (hasHeader && offset >= payloadStart + payloadLength)
+                    {
+                        onReceived(buffer, payloadStart, payloadLength, seq);
+                        offset = 0;
+                        hasHeader = false;
+                    }
+                }
+            }
+            while (serial.IsOpen);
+        }
+
+        private void onReceived(byte[] buffer, byte payloadStart, byte length, byte seq)
+        {
+
+            if (checkAck(buffer, payloadStart, length, out bool ack, out byte ackSeq))
+                confirm(ackSeq, ack);
+            else
+            {
+                var asString = Encoding.ASCII.GetString(buffer, payloadStart, length);
+
+            }
+        }
+
+        private void confirm(byte ackSeq, bool ack)
+        {
+            var res = responseTasks[ackSeq];
+            res?.TrySetResult(ack);
+            responseTasks[ackSeq] = null;
+        }
+
+        private bool checkAck(byte[] buffer, byte payloadStart, byte length, out bool ack, out byte ackSeq)
+        {
+            if (length == 4)
+            {
+                var str = Encoding.ASCII.GetString(buffer, payloadStart, 3);
+                ackSeq = buffer[payloadStart + 3];
+                switch (str)
+                {
+                    case "ACK":
+                        ack = true;
+                        return true;
+                    case "NAC":
+                        ack = false;
+                        return true;
+                }
+            }
+            ack = false;
+            ackSeq = 0;
+            return false;
+        }
+
+        private bool findHeader(byte[] buffer, byte offset, out byte headerOffset)
+        {
+            for (byte i = 0; i < offset - HEADER_SIZE; i++)
+            {
+                if (checkHeader(buffer, i))
+                {
+                    headerOffset = i;
+                    return true;
+                }
+            }
+            headerOffset = 0;
+            return false;
+        }
+
+        private bool checkHeader(byte[] buffer, byte i)
+        {
+            for (byte j = 0; j < header.Length; j++)
+            {
+                if (buffer[i + j] != header[j])
+                    return false;
+            }
+            return true;
         }
 
         public event Action<byte[], int, int> RawDataReceived;
-        public event Action<byte[], int, int> RawDataSend;
+        public event Action<byte[], int, int> RawDataSent;
 
         private SemaphoreSlim writeSemaphore = new SemaphoreSlim(1);
 
@@ -46,10 +148,12 @@ namespace CNCController
                 var confirm = WaitForResponse(seq);
                 do
                 {
-                    RawDataSend?.Invoke(bytes, 0, bytes.Length);
-                    await serial.BaseStream.WriteAsync(bytes, 0, bytes.Length, cancellationToken);
+                    RawDataSent?.Invoke(bytes, 0, bytes.Length);
+                    await serial.BaseStream.WriteAsync(bytes, 0, bytes.Length, cancellationToken).ConfigureAwait(false);
                     var timeout = getConfirmTimeout(); // give remote 100 ms time to confirm. 
-                    confirmed = await WaitForAnyAsync(timeout, confirm);
+                    confirmed = await WaitForAnyAsync(timeout, confirm).ConfigureAwait(false);
+                    if (confirm.IsCompleted && !confirmed) // NACK was received, wait for next ACK
+                        confirm = WaitForResponse(seq);
                 }
                 while (!confirmed);
                 // TODO: wait for confirmation
@@ -64,7 +168,7 @@ namespace CNCController
 
         private async Task<bool> getConfirmTimeout()
         {
-            await Task.Delay(100).ConfigureAwait(false);
+            await Task.Delay(200).ConfigureAwait(false);
             return false;
         }
 
