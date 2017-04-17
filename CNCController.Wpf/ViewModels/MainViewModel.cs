@@ -17,7 +17,10 @@ namespace CNCController.Wpf.ViewModels
         private string comPort;
         private string status;
         private bool isOpen;
+        private readonly MovementScaleSettings scale;
+
         public ManualControllViewModel ManualControl { get; }
+        public Milling2DControlViewModel Milling2DControl { get; }
 
         public bool IsOpen { get => isOpen; set => this.RaiseAndSetIfChanged(ref isOpen, value); }
         public string Status { get => status; set => this.RaiseAndSetIfChanged(ref status, value); }
@@ -36,6 +39,7 @@ namespace CNCController.Wpf.ViewModels
 
         public MainViewModel()
         {
+            this.scale = new MovementScaleSettings();
             comPort = SerialPort.GetPortNames().FirstOrDefault();
             var comportSet = this.WhenAny(x => x.ComPort, x => !string.IsNullOrWhiteSpace(x.Value));
 
@@ -74,13 +78,21 @@ namespace CNCController.Wpf.ViewModels
             outputStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => RawOutput.Add(string.Format("{0:X2}", m)));
             responseStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => Responses.Add(new ResponseViewModel(m)));
 
-            this.ManualControl = new ManualControllViewModel(comms, isOpen);
+            this.ManualControl = new ManualControllViewModel(scale, comms, isOpen);
+            this.ManualControl.StatusChanged += ManualControl_StatusChanged;
+            this.Milling2DControl = new Milling2DControlViewModel(scale, comms, isOpen);
         }
+
+        private void ManualControl_StatusChanged(string status) => Status = status;
 
         private async Task clear()
         {
             var result = comms.ClearAsync();
+            this.Responses.Clear();
+            this.RawInput.Clear();
+            this.RawOutput.Clear();
             await waitForCommandStatus(result, "Clear");
+            
         }
 
         private byte[] FormatBytes(byte[] arg1, int arg2, int arg3) => arg1.Skip(arg2).Take(arg3).ToArray();

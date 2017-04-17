@@ -68,6 +68,7 @@ namespace CNCController
         public event Action<byte[], int, int> RawResponseReceived;
         public event Action<Response> ResponseReceived;
         public event Action<bool> ConnectionChanged;
+        public event Action PositionReset;
 
         private async void beginReading(CancellationToken cancel)
         {
@@ -126,6 +127,9 @@ namespace CNCController
                             // startupEvent;
                             break;
                     }
+
+                    if (response.Type == ResponseType.Completed && response.Header.Type == MessageType.Reset)
+                        PositionReset?.Invoke();
 
                 } while (serial.IsOpen && !cancelSource.IsCancellationRequested);
             }

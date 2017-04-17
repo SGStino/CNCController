@@ -77,6 +77,11 @@
       <SubType>Designer</SubType>
     </ApplicationDefinition>
     <Compile Include="DeviceChangeEvent.cs" />
+    <Compile Include="ViewModels\LineViewModel.cs" />
+    <Compile Include="ViewModels\Milling2DControlViewModel.cs" />
+    <Compile Include="ViewModels\MovementScaleSettings.cs" />
+    <Compile Include="Views\Milling2DControl.cs" />
+    <Compile Include="Views\PressedButton.cs" />
     <Compile Include="ViewModels\MainViewModel.cs" />
     <Compile Include="ViewModels\ManualControllViewModel.cs" />
     <Compile Include="ViewModels\ResponseViewModel.cs" />

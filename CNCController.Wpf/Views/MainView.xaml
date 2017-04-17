@@ -19,7 +19,7 @@
             <Separator/>
             <Button Command="{Binding ResetCommand}" Content="Reset"/>
             <Button Command="{Binding ClearCommand}" Content="Clear"/>
-        </ToolBar> 
+        </ToolBar>
         <StatusBar DockPanel.Dock="Bottom">
             <StatusBarItem Content="{Binding IsOpen}">
                 <StatusBarItem.ContentTemplate>
@@ -36,8 +36,12 @@
             <Separator/>
             <StatusBarItem Content="{Binding Status}"/>
         </StatusBar>
-        <TabControl>
-            <TabItem Header="Diagnostics">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition/>
+                <RowDefinition/>
+            </Grid.RowDefinitions>
+            <Border>
                 <Grid Margin="0,-2,0,2">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition/>
@@ -72,27 +76,68 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
                 </Grid>
-            </TabItem>
-            <TabItem Header="Manual" DataContext="{Binding ManualControl}">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition/>
-                        <ColumnDefinition/>
-                        <ColumnDefinition/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition/>
-                        <RowDefinition/>
-                        <RowDefinition/>
-                    </Grid.RowDefinitions>
-                    <RepeatButton Command="{Binding MoveUpCommand}" Content="Up" Grid.Column="0" Grid.Row="0"/>
-                    <RepeatButton Command="{Binding MoveDownCommand}" Content="Down" Grid.Column="3" Grid.Row="3"/>
-                    <RepeatButton Command="{Binding MoveForwardCommand}" Content="Forward" Grid.Column="1" Grid.Row="0"/>
-                    <RepeatButton Command="{Binding MoveBackwardCommand}" Content="Backward" Grid.Column="1" Grid.Row="2"/>
-                    <RepeatButton Command="{Binding MoveLeftCommand}" Content="Left" Grid.Column="0" Grid.Row="1"/>
-                    <RepeatButton Command="{Binding MoveRightCommand}" Content="Right" Grid.Column="3" Grid.Row="1"/>
-                </Grid>
-            </TabItem>
-        </TabControl>
+            </Border>
+            <TabControl Grid.Row="2">
+                <TabItem Header="Manual">
+                    <Border IsEnabled="{Binding IsOpen}" >
+                        <Grid  DataContext="{Binding ManualControl}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition/>
+                                <ColumnDefinition/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+                            <local:PressedButton x:Name="btnUp" IsButtonPressed="{Binding MovingUp}" Content="Up" Grid.Column="0" Grid.Row="0"/>
+                            <local:PressedButton x:Name="btnDown" IsButtonPressed="{Binding MovingDown}" Content="Down" Grid.Column="3" Grid.Row="3"/>
+                            <local:PressedButton x:Name="btnForward" IsButtonPressed="{Binding MovingForward}" Content="Forward" Grid.Column="1" Grid.Row="0"/>
+                            <local:PressedButton x:Name="btnBackward" IsButtonPressed="{Binding MovingBackward}" Content="Backward" Grid.Column="1" Grid.Row="2"/>
+                            <local:PressedButton x:Name="btnLeft" IsButtonPressed="{Binding MovingLeft}" Content="Left" Grid.Column="0" Grid.Row="1"/>
+                            <local:PressedButton x:Name="btnRight" IsButtonPressed="{Binding MovingRight}" Content="Right" Grid.Column="3" Grid.Row="1"/>
+                        </Grid>
+                    </Border>
+                </TabItem>
+                <TabItem Header="2D">
+                    <Viewbox>
+                        <local:Milling2DControl LineCommand="{Binding LineCommand}" MoveCommand="{Binding MoveCommand}"  Width="32.8" Height="25.3" Background="Gray" DataContext="{Binding Milling2DControl}">
+                            <Grid>
+                                <ItemsControl ItemsSource="{Binding Lines}" IsHitTestVisible="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="ContentTemplate">
+                                                <Setter.Value>
+                                                    <DataTemplate>
+                                                        <Line Name="line" X1="{Binding Start.X}" X2="{Binding End.X}" Y1="{Binding Start.Y}" Y2="{Binding End.Y}" Stroke="Red" StrokeThickness="0.1"/>
+                                                        <DataTemplate.Triggers>
+                                                            <DataTrigger Binding="{Binding IsQueued}" Value="True">
+                                                                <Setter Property="Stroke" TargetName="line" Value="Blue"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsCompleted}" Value="True">
+                                                                <Setter Property="Stroke" TargetName="line" Value="Lime"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsWork}" Value="False">
+                                                                <Setter Property="StrokeDashArray" TargetName="line" Value="2 4 2 4"/>
+                                                            </DataTrigger>
+                                                        </DataTemplate.Triggers>
+                                                    </DataTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                </ItemsControl>
+                            </Grid>
+                        </local:Milling2DControl>
+                    </Viewbox>
+                </TabItem>
+            </TabControl>
+        </Grid>
     </DockPanel>
 </UserControl>

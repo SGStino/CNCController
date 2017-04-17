@@ -8,6 +8,6 @@ namespace CNCController
         RelativeX = 1,
         RelativeY = 2,
         RelativeZ = 4,
-        AbsoluteE = 8 
+        AbsoluteE = 8
     }
 }

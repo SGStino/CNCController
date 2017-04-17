@@ -1,9 +1,9 @@
-//#include <SoftwareSerial.h>
+#include <SoftwareSerial.h>
 
-//const byte rxPin = 2;
-//const byte txPin = 3;
+const byte rxPin = A0;
+const byte txPin = A1;
 
-//SoftwareSerial debugSerial (rxPin, txPin);
+SoftwareSerial debugSerial (rxPin, txPin);
 
 const byte PIN_SENSE_ZERO = 12;
 const int PIN_MXYZ_EN = 3; 
@@ -86,7 +86,12 @@ void createPointer(RequestHeader* header, byte index)
   commandQueueLength++;
 
 
-//  debugSerial.println("createPointer");
+  debugSerial.print("write \t\t\t");
+  debugSerial.print(header->type);
+  debugSerial.print("\t");
+  debugSerial.print((uint32_t)header->id);
+  debugSerial.print("\t");
+  debugSerial.println(pos);
 //  debugSerial.print("  pos=");
 //  debugSerial.println(pos); 
 //  debugSerial.print("  nextPos=");
@@ -100,6 +105,10 @@ void createPointer(RequestHeader* header, byte index)
 }
 void confirm(RequestHeader* header)
 {
+  debugSerial.print("confirm \t\t");
+  debugSerial.print(header->type);
+  debugSerial.print("\t");
+  debugSerial.println((uint32_t)header->id);
   Response response;
   response.type = Acknowledge;
   response.header = *header;
@@ -167,7 +176,7 @@ void readPosition(RequestHeader* header)
 
 void invalidHeader()
 { 
-//  debugSerial.println("invalidHeader");
+  debugSerial.println("invalidHeader");
   Response response;
   response.header.id = 1;
   response.header.type = Clear;
@@ -200,7 +209,7 @@ bool findMsg(char* buffer, int bufferLength, byte* pos)
         bool led13 = false;
 void readCommandBuffer()
 {  
-  while(Serial.available()> 0)
+  if(Serial.available()> 0)
   { 
     int toRead = (sizeof(RequestHeader) - receiveOffset + 3);
     int count = Serial.readBytes((char*)&receiveBuffer + receiveOffset, toRead); // prevent timeouts!
@@ -220,8 +229,11 @@ void readCommandBuffer()
   
       auto msgLength = receiveOffset;
       receiveOffset = 0; 
-      
       RequestHeader header = *((RequestHeader*)(&receiveBuffer[3]));
+      debugSerial.print("read\t\t\t");
+      debugSerial.print(header.type);
+      debugSerial.print("\t");
+      debugSerial.println((uint32_t)header.id);
       switch(header.type)
        {
           case Reset:
@@ -257,8 +269,8 @@ void setup() {
   Serial.write((char*)&response, sizeof(Response)); 
   pinMode(13, OUTPUT);
 
-//  debugSerial.begin(9600);
-//  debugSerial.println("setup");
+  debugSerial.begin(9600);
+  debugSerial.println("setup");
 
   for(int i = 0; i < 4; i++){
     pinMode(PIN_MOTOR_CLK[i], OUTPUT);
@@ -268,7 +280,7 @@ void setup() {
 
 void completeCommand()
 {
-//  debugSerial.println("completeCommand");
+  debugSerial.println("completeCommand");
   auto command = commandQueue[currentReadQueue];
 //    debugSerial.print("  start=");
 //    debugSerial.println((uint32_t)command.header.id); 
@@ -281,6 +293,8 @@ void completeCommand()
   Serial.write((char*)&response, sizeof(Response));
   isCommandBusy = false;
   currentReadQueue++;
+  if(currentReadQueue > MAX_QUEUE_LEN)
+    currentReadQueue = 0;
 }
 
 void runReset()
@@ -321,7 +335,7 @@ void runMove(RequestPosition* pos, uint32_t iteration)
   auto delta = now - commandStartTime;
   if(iteration == 0)
   {
-//    debugSerial.println("started moving");
+    debugSerial.println("started moving");
     for(int i = 0; i<3; i++){
       int32_t stepCount = 0;
       byte flag = 1<<i;
@@ -333,7 +347,7 @@ void runMove(RequestPosition* pos, uint32_t iteration)
         else
         positionTargetXYZ[i] += pos->steps[i];      
       }else{ 
-        int32_t delta = pos->steps[i] - positionTargetXYZ[i];
+        int32_t delta = pos->steps[i] - positionXYZ[i];
         positionTargetXYZ[i] = max(0, pos->steps[i]);
         stepCount = delta; 
       }
@@ -343,18 +357,22 @@ void runMove(RequestPosition* pos, uint32_t iteration)
       digitalWrite(PIN_MOTOR_CLK[i], HIGH);
       digitalWrite(PIN_MOTOR_DIR[i], positionTargetXYZ[i] > positionXYZ[i] ? HIGH : LOW); // set direction
  
-//      debugSerial.print("  time[");
-//      debugSerial.print(i);
-//      debugSerial.print("]=");
-//      debugSerial.println(timeXYZ[i]); 
-//      debugSerial.print("  steps[");
-//      debugSerial.print(i);
-//      debugSerial.print("]=");
-//      debugSerial.println(stepCount); 
-//      debugSerial.print("  target[");
-//      debugSerial.print(i);
-//      debugSerial.print("]=");
-//      debugSerial.println(positionTargetXYZ[i]);  
+      debugSerial.print("  time[");
+      debugSerial.print(i);
+      debugSerial.print("]=");
+      debugSerial.println(timeXYZ[i]); 
+      debugSerial.print("  steps[");
+      debugSerial.print(i);
+      debugSerial.print("]=");
+      debugSerial.println(stepCount); 
+      debugSerial.print("  target[");
+      debugSerial.print(i);
+      debugSerial.print("]=");
+      debugSerial.println(positionTargetXYZ[i]);  
+      debugSerial.print("  pos[");
+      debugSerial.print(i);
+      debugSerial.print("]=");
+      debugSerial.println(positionXYZ[i]);  
     }
   }
 
@@ -393,7 +411,7 @@ void runMove(RequestPosition* pos, uint32_t iteration)
   
   
   if(atTargetXYZ == 7 && positionTargetExtruder == positionExtruder){    
-//    debugSerial.println("moveComplete"); 
+    debugSerial.println("moveComplete"); 
     completeCommand();
   }
 }
@@ -401,6 +419,14 @@ void runMove(RequestPosition* pos, uint32_t iteration)
 void runCommand(uint32_t iteration)
 {
   auto command = commandQueue[currentReadQueue];
+  if(iteration == 0){
+    debugSerial.print("runCommand\t\t");
+    debugSerial.print(command.header.type);    
+    debugSerial.print("\t");
+    debugSerial.print((uint32_t)command.header.id);
+    debugSerial.print("\t");
+    debugSerial.println(currentReadQueue);
+  }
   switch(command.header.type)
   {
     case Reset:

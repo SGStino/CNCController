@@ -24,5 +24,6 @@ namespace CNCController.Wpf.Views
         {
             InitializeComponent();
         }
+        
     }
 }

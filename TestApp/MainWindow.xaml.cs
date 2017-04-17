@@ -138,12 +138,12 @@ namespace TestApp
 
         private void LogInput(string v)
         {
-            Input.Text += v;
+            Input.Text += v + Environment.NewLine;
         }
 
         private void LogOutput(string v)
         {
-            Output.Text += v;
+            Output.Text += v + Environment.NewLine;
         }
 
         private async void MoveButton_Click(object sender, RoutedEventArgs args)
@@ -176,7 +176,7 @@ namespace TestApp
                     Flags = flags,
                 };
                 var result = comms.WritePositionAsync(pos);
-                await debugCommand($"Move {x},{y},{z} {e} in {t/1000000.0} sec", result);
+                await debugCommand($"Move {x},{y},{z} {e} in {t / 1000000.0} sec", result);
             }
         }
     }
