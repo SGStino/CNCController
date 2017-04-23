@@ -34,8 +34,8 @@ namespace CNCController.Wpf.ViewModels
 
         public ReadOnlyObservableCollection<string> ComPorts => DeviceChangeEvent.ComPorts;
 
-        public ReactiveList<string> RawInput { get; } = new ReactiveList<string>();
-        public ReactiveList<string> RawOutput { get; } = new ReactiveList<string>();
+        public ReactiveList<DatagramViewModel> RawInput { get; } = new ReactiveList<DatagramViewModel>();
+        public ReactiveList<DatagramViewModel> RawOutput { get; } = new ReactiveList<DatagramViewModel>();
         public ReactiveList<ResponseViewModel> Responses { get; } = new ReactiveList<ResponseViewModel>();
 
         public MainViewModel()
@@ -46,20 +46,20 @@ namespace CNCController.Wpf.ViewModels
 
 
             var inputStream = Observable.FromEvent<Action<byte[], int, int>, byte[]>(handler =>
-               {
-                   Action<byte[], int, int> h = (arg1, arg2, arg3) => handler(FormatBytes(arg1, arg2, arg3));
-                   return h;
-               }
-            , handler => comms.RawDataReceived += handler, handler => comms.RawDataReceived -= handler).SelectMany(m => m);
+             {
+                 Action<byte[], int, int> h = (arg1, arg2, arg3) => handler(arg1.Skip(arg2).Take(arg3).ToArray());
+                 return h;
+             }
+            , handler => comms.RawDataReceived += handler, handler => comms.RawDataReceived -= handler);
 
             var outputStream = Observable.FromEvent<Action<byte[], int, int>, byte[]>(handler =>
-            {
-                Action<byte[], int, int> h = (arg1, arg2, arg3) => handler(FormatBytes(arg1, arg2, arg3));
-                return h;
-            }
-            , handler => comms.RawDataSend += handler, handler => comms.RawDataSend -= handler).SelectMany(m => m);
+           {
+               Action<byte[], int, int> h = (arg1, arg2, arg3) => handler(arg1.Skip(arg2).Take(arg3).ToArray());
+               return h;
+           }
+            , handler => comms.RawDataSent += handler, handler => comms.RawDataSent -= handler);
 
-            var responseStream = Observable.FromEvent<Response>(h => comms.ResponseReceived += h, h => comms.ResponseReceived -= h);
+            var responseStream = Observable.FromEvent<Position>(h => comms.PositionConfirmed += h, h => comms.PositionConfirmed -= h);
 
             var isOpen = Observable.FromEvent<bool>(handler => comms.ConnectionChanged += handler, handler => comms.ConnectionChanged -= handler, RxApp.MainThreadScheduler);
             isOpen = isOpen.StartWith(false);
@@ -75,8 +75,8 @@ namespace CNCController.Wpf.ViewModels
             ClearCommand = ReactiveCommand.CreateFromTask(() => clear(), isOpen);
 
 
-            inputStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => RawInput.Add(string.Format("{0:X2}", m)));
-            outputStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => RawOutput.Add(string.Format("{0:X2}", m)));
+            inputStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => RawInput.Add(new DatagramViewModel(m)));
+            outputStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => RawOutput.Add(new DatagramViewModel(m)));
             responseStream.ObserveOn(RxApp.MainThreadScheduler).Subscribe(m => Responses.Add(new ResponseViewModel(m)));
 
             this.ManualControl = new ManualControllViewModel(scale, comms, isOpen);
@@ -93,7 +93,7 @@ namespace CNCController.Wpf.ViewModels
             this.RawInput.Clear();
             this.RawOutput.Clear();
             await waitForCommandStatus(result, "Clear");
-            
+
         }
 
         private byte[] FormatBytes(byte[] arg1, int arg2, int arg3) => arg1.Skip(arg2).Take(arg3).ToArray();

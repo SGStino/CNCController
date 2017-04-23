@@ -7,10 +7,13 @@ using System.Threading.Tasks;
 
 namespace CNCController.Protocol
 {
-    [StructLayout(LayoutKind.Sequential)]
+    [StructLayout(LayoutKind.Explicit, Size = SIZE)]
     public struct PositionDatagram
     {
+        public const int SIZE = RequestHeader.SIZE + Movement.SIZE;
+        [FieldOffset(0)]
         public RequestHeader Header;
-        public Position Position;
+        [FieldOffset(RequestHeader.SIZE)]
+        public Movement Position;
     }
 }

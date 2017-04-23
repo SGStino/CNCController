@@ -13,70 +13,152 @@ namespace CNCController
 {
     public class Communications
     {
+        private const int QUEUE_SIZE = 20;
+        private SemaphoreSlim queueSizeSemaphore = new SemaphoreSlim(QUEUE_SIZE);
+
         private const byte HEADER_SIZE = 4;
         private byte[] header = new byte[] { (byte)'M', (byte)'S', (byte)'G' };
 
         private CancellationTokenSource cancelCommands = new CancellationTokenSource();
         private SerialPort serial;
         private uint id = 0;
-        private readonly Dictionary<ulong, TaskCompletionSource<ulong>> taskAcknowledgements = new Dictionary<ulong, TaskCompletionSource<ulong>>();
-        private readonly Dictionary<ulong, TaskCompletionSource<ulong>> taskCompletions = new Dictionary<ulong, TaskCompletionSource<ulong>>();
+        private readonly Dictionary<uint, TaskCompletionSource<uint>> taskAcknowledgements = new Dictionary<uint, TaskCompletionSource<uint>>();
+        private readonly Dictionary<uint, TaskCompletionSource<uint>> taskCompletions = new Dictionary<uint, TaskCompletionSource<uint>>();
+
+        public event Action<byte[], int, int> RawDataReceived;
+        public event Action<byte[], int, int> RawDataSent;
+        public event Action<bool> ConnectionChanged;
+        public event Action<Position> PositionConfirmed;
 
         private byte sequence = 0;
 
         private TaskCompletionSource<bool>[] responseTasks = new TaskCompletionSource<bool>[255];
 
-        public void Open(string port, int baudrate = 9600)
+        public async void Open(string port, int baudrate = 9600)
         {
             serial = new SerialPort(port, baudrate);
             serial.Open();
-            beginReading();
+            ConnectionChanged?.Invoke(true);
+            await doReading();
+            ConnectionChanged?.Invoke(false);
+        }
+        public void Close()
+        {
+            serial.Close();
         }
 
-        private async void beginReading()
+        private async Task doReading()
         {
-            byte payloadLength = 0, payloadStart = 0, seq = 0;
-            bool hasHeader = false;
-
-            byte offset = 0;
-            byte[] buffer = new byte[128];
-            do
+            try
             {
-                int available = buffer.Length - offset;
-                int count = await serial.BaseStream.ReadAsync(buffer, offset, available).ConfigureAwait(false);
-                offset += (byte)count;
-                if (offset >= buffer.Length) throw new OverflowException("Too much data for buffer, should not have happened");
-                if (count > 0)
-                {
-                    if (findHeader(buffer, offset, out byte headerOffset))
-                    {
-                        payloadLength = buffer[headerOffset + header.Length];
-                        seq = buffer[headerOffset + header.Length + 1];
-                        payloadStart = (byte)(headerOffset + header.Length + 2);
-                        hasHeader = true;
-                    }
+                byte payloadLength = 0, payloadStart = 0, seq = 0;
+                bool hasHeader = false;
 
-                    if (hasHeader && offset >= payloadStart + payloadLength)
+                byte offset = 0;
+                byte[] buffer = new byte[128];
+                do
+                {
+                    int available = buffer.Length - offset;
+                    int count = await serial.BaseStream.ReadAsync(buffer, offset, available).ConfigureAwait(false);
+                    offset += (byte)count;
+                    if (offset >= buffer.Length) throw new OverflowException("Too much data for buffer, should not have happened");
+                    if (count > 0)
                     {
-                        onReceived(buffer, payloadStart, payloadLength, seq);
-                        offset = 0;
-                        hasHeader = false;
+                        if (findHeader(buffer, offset, out byte headerOffset))
+                        {
+                            payloadLength = buffer[headerOffset + header.Length];
+                            seq = buffer[headerOffset + header.Length + 1];
+                            payloadStart = (byte)(headerOffset + header.Length + 2);
+                            hasHeader = true;
+                        }
+
+                        if (hasHeader && offset >= payloadStart + payloadLength)
+                        {
+                            onReceived(buffer, payloadStart, payloadLength, seq);
+                            offset = 0;
+                            hasHeader = false;
+                        }
                     }
                 }
+                while (serial.IsOpen);
+
             }
-            while (serial.IsOpen);
+            catch (Exception e)
+            {
+            }
         }
 
         private void onReceived(byte[] buffer, byte payloadStart, byte length, byte seq)
         {
-
+            this.RawDataReceived?.Invoke(buffer, payloadStart, length);
             if (checkAck(buffer, payloadStart, length, out bool ack, out byte ackSeq))
                 confirm(ackSeq, ack);
             else
             {
-                var asString = Encoding.ASCII.GetString(buffer, payloadStart, length);
-
+                var header = Encoding.ASCII.GetString(buffer, payloadStart, 3);
+                switch (header)
+                {
+                    case "STA":
+                        if (length >= Marshal.SizeOf<CommandResponse>() + 3)
+                            onStart(getStruct<CommandResponse>(buffer, payloadStart + 3));
+                        break;
+                    case "STO":
+                        if (length >= Marshal.SizeOf<CommandResponse>() + 3)
+                            onStop(getStruct<CommandResponse>(buffer, payloadStart + 3));
+                        break;
+                }
             }
+        }
+
+        private void onStop(CommandResponse rsp)
+        {
+            var id = rsp.Id;
+            acknowledge(id);
+            complete(id);
+            ensureQueueSize(rsp);
+            PositionConfirmed?.Invoke(getPosition(rsp));
+        }
+
+        private Position getPosition(CommandResponse rsp)
+        {
+            return new Position
+            {
+                X = rsp.X,
+                Y = rsp.Y,
+                Z = rsp.Z,
+                E = rsp.E
+            };
+        }
+
+        private void ensureQueueSize(CommandResponse rsp)
+        {
+            int queueReleased = (QUEUE_SIZE - queueSizeSemaphore.CurrentCount) - rsp.QueueLength;
+            if (queueReleased > 0)
+                queueSizeSemaphore.Release(queueReleased);
+        }
+
+        private void onStart(CommandResponse rsp)
+        {
+            var previous = taskAcknowledgements.Keys.Where(k => k < rsp.Id).ToArray();
+            ensureQueueSize(rsp);
+            acknowledge(rsp.Id);
+            foreach (var id in previous)
+            {
+                acknowledge(id);
+                complete(id);
+            }
+            PositionConfirmed?.Invoke(getPosition(rsp));
+        }
+
+        private void acknowledge(uint id)
+        {
+            if (taskAcknowledgements.TryGetValue(id, out TaskCompletionSource<uint> tcs))
+                tcs.TrySetResult(id);
+        }
+        private void complete(uint id)
+        {
+            if (taskCompletions.TryGetValue(id, out TaskCompletionSource<uint> tcs))
+                tcs.TrySetResult(id);
         }
 
         private void confirm(byte ackSeq, bool ack)
@@ -131,14 +213,14 @@ namespace CNCController
             return true;
         }
 
-        public event Action<byte[], int, int> RawDataReceived;
-        public event Action<byte[], int, int> RawDataSent;
+
 
         private SemaphoreSlim writeSemaphore = new SemaphoreSlim(1);
 
         public async Task WriteAsync<T>(byte seq, T datagram, CancellationToken cancellationToken)
             where T : struct
         {
+            await queueSizeSemaphore.WaitAsync().ConfigureAwait(false);
             await writeSemaphore.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -168,7 +250,7 @@ namespace CNCController
 
         private async Task<bool> getConfirmTimeout()
         {
-            await Task.Delay(200).ConfigureAwait(false);
+            await Task.Delay(1000).ConfigureAwait(false);
             return false;
         }
 
@@ -190,9 +272,11 @@ namespace CNCController
             arr[2] = (byte)'G';
             arr[3] = (byte)size;
             arr[4] = seq;
+            var test = new byte[size];
             IntPtr ptr = Marshal.AllocHGlobal(size);
             Marshal.StructureToPtr(str, ptr, true);
             Marshal.Copy(ptr, arr, 5, size);
+            Marshal.Copy(ptr, test, 0, size);
             Marshal.FreeHGlobal(ptr);
             crc = computeChecksum(arr, 5, arr.Length - 7);/* length - seq - header - crc */
 
@@ -248,7 +332,7 @@ namespace CNCController
             var payload = new RequestHeader
             {
                 Id = getID(),
-                Type = MessageType.Clear
+                Type = MessageType.Reset
             };
             return SendWithResult(payload, payload.Id);
         }
@@ -274,18 +358,45 @@ namespace CNCController
                 Id = getID(),
                 Type = MessageType.Clear
             };
-            return SendWithResult(payload, payload.Id);
+            var result = SendWithResult(payload, payload.Id);
+
+
+            result.Send.ContinueWith(t =>
+            {
+                queueSizeSemaphore.Release(QUEUE_SIZE - queueSizeSemaphore.CurrentCount);
+                acknowledgeAll();
+                completeAll();
+            }); // auto complete clear command as no start/stop get send
+
+            return result;
         }
 
+        private void completeAll()
+        {
+            setAllResults(taskCompletions);
+        }
 
-        public CommResult WritePositionAsync(Position pos)
+        private void acknowledgeAll()
+        {
+            setAllResults(taskAcknowledgements);
+        }
+
+        private static void setAllResults(Dictionary<uint, TaskCompletionSource<uint>> dict)
+        {
+            var tasks = dict.ToArray();
+            dict.Clear();
+            foreach (var task in tasks)
+                task.Value.TrySetResult(task.Key);
+        }
+
+        public CommResult WritePositionAsync(Movement pos)
         {
             var payload = new PositionDatagram
             {
                 Header = new RequestHeader
                 {
                     Id = getID(),
-                    Type = MessageType.Clear
+                    Type = MessageType.Position
                 },
                 Position = pos
             };
@@ -296,9 +407,9 @@ namespace CNCController
         {
             return id++;
         }
-        private TaskCompletionSource<ulong> getTask(ulong commandId, Dictionary<ulong, TaskCompletionSource<ulong>> source)
+        private TaskCompletionSource<uint> getTask(uint commandId, Dictionary<uint, TaskCompletionSource<uint>> source)
         {
-            var tcs = new TaskCompletionSource<ulong>();
+            var tcs = new TaskCompletionSource<uint>();
             lock (source)
                 source.Add(commandId, tcs);
             return tcs;

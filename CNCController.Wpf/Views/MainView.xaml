@@ -8,8 +8,36 @@
              d:DesignHeight="300" d:DesignWidth="300">
     <UserControl.Resources>
         <ItemsPanelTemplate x:Key="BytePanel">
-            <UniformGrid Columns="16" VerticalAlignment="Top"/>
+            <StackPanel Grid.IsSharedSizeScope="True"/>
         </ItemsPanelTemplate>
+        <DataTemplate x:Key="ByteTemplate">
+            <ItemsControl ItemsSource="{Binding Partitions}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition SharedSizeGroup="A" Width="auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ItemsControl ItemsSource="{Binding Data}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <UniformGrid Rows="1" Columns="16"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock FontFamily="Consolas" Margin="5" Text="{Binding StringFormat={}{0:X2}}"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock FontFamily="Consolas" Margin="5" Text="{Binding String}" Grid.Column="1"/>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+        </DataTemplate>
     </UserControl.Resources>
     <DockPanel>
         <ToolBar ToolBarTray.IsLocked="True" DockPanel.Dock="Top">
@@ -50,9 +78,9 @@
                         <ColumnDefinition Width="5"/>
                         <ColumnDefinition/>
                     </Grid.ColumnDefinitions>
-                    <ListBox ItemsSource="{Binding RawInput}" Grid.Column="0" ItemsPanel="{StaticResource BytePanel}"/>
+                    <ListBox ItemsSource="{Binding RawInput}" Grid.Column="0" ItemsPanel="{StaticResource BytePanel}" ItemTemplate="{StaticResource ByteTemplate}"/>
                     <GridSplitter VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Grid.Column="1"/>
-                    <ListBox ItemsSource="{Binding RawOutput}" Grid.Column="2" ItemsPanel="{StaticResource BytePanel}"/>
+                    <ListBox ItemsSource="{Binding RawOutput}" Grid.Column="2" ItemsPanel="{StaticResource BytePanel}" ItemTemplate="{StaticResource ByteTemplate}"/>
                     <GridSplitter VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Grid.Column="3"/>
                     <ListBox ItemsSource="{Binding Responses}" Grid.Column="4">
                         <ListBox.ItemTemplate>
@@ -103,7 +131,12 @@
                 <TabItem Header="2D">
                     <Viewbox>
                         <local:Milling2DControl LineCommand="{Binding LineCommand}" MoveCommand="{Binding MoveCommand}"  Width="32.8" Height="25.3" Background="Gray" DataContext="{Binding Milling2DControl}">
-                            <Grid>
+                            <Canvas>
+                                <Grid Width="0" Height="0" Canvas.Left="{Binding CurrentPosition.X}" Canvas.Top="{Binding CurrentPosition.Y}">
+                                    <Ellipse Margin="-.5" Width=".5" Height=".5" Fill="HotPink">
+                                        
+                                    </Ellipse>
+                                </Grid>
                                 <ItemsControl ItemsSource="{Binding Lines}" IsHitTestVisible="False">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
@@ -133,7 +166,7 @@
                                         </Style>
                                     </ItemsControl.ItemContainerStyle>
                                 </ItemsControl>
-                            </Grid>
+                            </Canvas>
                         </local:Milling2DControl>
                     </Viewbox>
                 </TabItem>

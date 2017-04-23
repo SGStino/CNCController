@@ -1,4 +1,5 @@
-﻿using ReactiveUI;
+﻿using CNCController.Protocol;
+using ReactiveUI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -65,13 +66,13 @@ namespace CNCController.Wpf.ViewModels
             var d = Math.Sqrt(mX * mX + mY * mY + mZ * mZ);
 
             var duration = (uint)(d / speed * 1000000);
-            var pos = new Position
+            var pos = new Movement
             {
                 Duration = duration,
                 StepY = scale.YSteps(mY),
                 StepZ = scale.ZSteps(mZ),
                 StepX = scale.XSteps(mX),
-                Flags = PositionFlags.RelativeX | PositionFlags.RelativeY | PositionFlags.RelativeZ
+                Flags = MovementFlags.RelativeX | MovementFlags.RelativeY | MovementFlags.RelativeZ
             };
 
 

@@ -56,10 +56,7 @@ namespace TestApp
             return char.IsLetterOrDigit(v) ? v : '.';
         }
 
-        private void Comms_ResponseReceived(Response obj)
-        {
-            Dispatcher.Invoke(() => this.Log($"{obj.Type} {obj.Header.Type} {obj.Header.Id}"));
-        }
+ 
 
         private void Comms_RawDataReceived(byte[] arg1, int offset, int arg2)
         {
@@ -153,21 +150,21 @@ namespace TestApp
             long e;
             uint t;
 
-            PositionFlags flags = 0;
+            MovementFlags flags = 0;
 
             if (CB_X_Relative.IsChecked ?? false)
-                flags |= PositionFlags.RelativeX;
+                flags |= MovementFlags.RelativeX;
             if (CB_Y_Relative.IsChecked ?? false)
-                flags |= PositionFlags.RelativeY;
+                flags |= MovementFlags.RelativeY;
             if (CB_Z_Relative.IsChecked ?? false)
-                flags |= PositionFlags.RelativeZ;
+                flags |= MovementFlags.RelativeZ;
             if (!(CB_E_Relative.IsChecked ?? false))
-                flags |= PositionFlags.AbsoluteE;
+                flags |= MovementFlags.AbsoluteE;
 
 
             if (int.TryParse(TB_X.Text, out x) && int.TryParse(TB_Y.Text, out y) && int.TryParse(TB_Z.Text, out z) && long.TryParse(TB_E.Text, out e) && uint.TryParse(TB_T.Text, out t))
             {
-                var pos = new Position()
+                var pos = new Movement()
                 {
                     Duration = t,
                     StepE = e,

@@ -44,14 +44,14 @@
     <Compile Include="CommResult.cs" />
     <None Include="Communications.cs.old" />
     <Compile Include="Communications.cs" />
+    <Compile Include="Position.cs" />
+    <Compile Include="Protocol\CommandResponse.cs" />
     <Compile Include="Protocol\MessageType.cs" />
-    <Compile Include="Protocol\Position.cs" />
+    <Compile Include="Protocol\Movement.cs" />
     <Compile Include="Protocol\PositionDatagram.cs" />
-    <Compile Include="Protocol\PositionFlags.cs" />
+    <Compile Include="Protocol\MovementFlags.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Protocol\RequestHeader.cs" />
-    <Compile Include="Protocol\Response.cs" />
-    <Compile Include="Protocol\ResponseType.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

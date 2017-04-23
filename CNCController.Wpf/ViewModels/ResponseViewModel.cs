@@ -1,4 +1,5 @@
-﻿using System;
+﻿using CNCController.Protocol;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -8,18 +9,16 @@ namespace CNCController.Wpf.ViewModels
 {
     public class ResponseViewModel
     {
-        private Response response;
+        private Position position;
 
-        public ResponseViewModel(Response response)
+        public ResponseViewModel(Position position)
         {
-            this.response = response;
+            this.position = position;
         }
 
-        public ResponseType Type => response.Type;
-        public int QueueLength => response.QueueLength;
-        public int QueueAvailable => response.QueueAvailable;
-        public int TotalQueue => QueueLength + QueueAvailable;
-        public MessageType Command => response.Header.Type;
-        public ulong Id => response.Header.Id;
+        public uint X => position.X;
+        public uint Y => position.Y;
+        public uint Z => position.Z;
+        public long E => position.E;
     }
 }
